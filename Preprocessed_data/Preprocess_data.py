@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import os
+import json
 
 
 
@@ -11,16 +12,15 @@ def read_files_to_dataframe(directory, years):
     for year in years:
         file_path = os.path.join(directory, f"{year}.xlsx")
         try:
-            # Read the Excel file into a DataFrame
+            
             df = pd.read_excel(file_path)
-            df['Year'] = year  # Add a column for the year
+            df['Year'] = year  
             data_frames.append(df)
         except FileNotFoundError:
             print(f"File {file_path} not found. Skipping.")
         except Exception as e:
             print(f"Error reading {file_path}: {e}")
 
-    # Concatenate all DataFrames into a single DataFrame
     combined_df = pd.concat(data_frames, ignore_index=True)
     return combined_df
 
@@ -30,19 +30,20 @@ def clip_rename_and_flip_dataframe(historical_data_df):
     historical_data_df = historical_data_df[['Date', 'Surface', 'Winner', 'Loser', 'WRank', 'LRank', 'WPts', 'LPts', 'W1', 'L1', 'W2', 'L2', 'W3', 'L3', 'W4', 'L4', 'W5', 'L5', 'AvgW', 'AvgL']]
 
     df = historical_data_df.rename(columns={
+
+        'Winner': 'P1', 'Loser': 'P2',
+        'WRank': 'P1_Rank', 'LRank': 'P2_Rank',
+        'WPts': 'P1_ATPts', 'LPts': 'P2_ATPts',
         'W1': 'P1S1', 'L1': 'P2S1',
         'W2': 'P1S2', 'L2': 'P2S2',
         'W3': 'P1S3', 'L3': 'P2S3',
         'W4': 'P1S4', 'L4': 'P2S4',
         'W5': 'P1S5', 'L5': 'P2S5',
-        'Winner': 'P1', 'Loser': 'P2',
-        'WRank': 'P1_Rank', 'LRank': 'P2_Rank',
-        'WPts': 'P1_ATPts', 'LPts': 'P2_ATPts',
         'AvgW': 'P1_Avg_Odds', 'AvgL': 'P2_Avg_Odds'
     })
 
     # Flip rows for alternating matches nad have a 50% Baseline
-    df.loc[1::2, ['P1', 'P2']] = df.loc[1::2, ['P2', 'P1']].values
+    df.loc[1::2, ['P1', 'P2']] = historical_data_df.loc[1::2, ['Loser', 'Winner']].values
     df.loc[1::2, ['P1_Rank', 'P2_Rank']] = historical_data_df.loc[1::2, ['LRank', 'WRank']].values
     df.loc[1::2, ['P1_ATPts', 'P2_ATPts']] = historical_data_df.loc[1::2, ['LPts', 'WPts']].values
     df.loc[1::2, ['P1S1', 'P2S1']] = historical_data_df.loc[1::2, ['L1', 'W1']].values
@@ -63,13 +64,18 @@ def clip_rename_and_flip_dataframe(historical_data_df):
 def initialize_dictionaries(unique_players):
     
     total_points_diff = {player: 0 for player in unique_players}
+
     sets_played = {player: 0 for player in unique_players}
+
     matches_played = {player: 0 for player in unique_players}
+
     win_record = {player: [] for player in unique_players}
+
     h2h_records = {
         (p1, p2): {'outcomes': [], 'matches': 0}
         for p1 in unique_players for p2 in unique_players if p1 != p2
     }
+
     surface_stats = {
         player: {
             'Hard': {'wins': 0, 'games': 0},
@@ -78,6 +84,7 @@ def initialize_dictionaries(unique_players):
         }
         for player in unique_players
     }
+
     return total_points_diff, sets_played, matches_played, win_record, h2h_records, surface_stats
 
 
@@ -85,28 +92,28 @@ def update_dictionaries(row, total_points_diff, sets_played, matches_played, win
     
     p1, p2 = row['P1'], row['P2']
     p1_rank, p2_rank = row['P1_Rank'], row['P2_Rank']
-    p1_ATPts, p2_ATPts = row['P1_ATPts'], row['P2_ATPts']
     surface = row['Surface']
     winner = row['Winner']
 
 
-    matches_played[p1] += 1
-    matches_played[p2] += 1
+    points_diff = sum(row[f'P1S{i}'] - row[f'P2S{i}'] for i in range(1, 6))
+    non_zero_sets_p1 = sum(row[f'P1S{i}'] > 0 for i in range(1, 6))
+    non_zero_sets_p2 = sum(row[f'P2S{i}'] > 0 for i in range(1, 6))
+    match_sets_played = max(non_zero_sets_p1, non_zero_sets_p2)
 
-    points_diff_p1 = sum(row[f'P1S{i}'] - row[f'P2S{i}'] for i in range(1, 6))
-    sets_played_p1 = sum(row[f'P1S{i}'] > 0 for i in range(1, 6))
-    sets_played_p2 = sum(row[f'P2S{i}'] > 0 for i in range(1, 6))
-    match_sets_played = max(sets_played_p1, sets_played_p2)
-
-    total_points_diff[p1] += points_diff_p1
-    total_points_diff[p2] -= points_diff_p1
 
     sets_played[p1] += match_sets_played
     sets_played[p2] += match_sets_played
+    matches_played[p1] += 1
+    matches_played[p2] += 1
+    total_points_diff[p1] += points_diff
+    total_points_diff[p2] -= points_diff
+
 
     if abs(p1_rank - p2_rank) <= 100:
         win_record[p1].append(1 if winner == 1 else 0)
         win_record[p2].append(1 if winner == 2 else 0)
+
 
     h2h_records[(p1, p2)]['matches'] += 1
     h2h_records[(p2, p1)]['matches'] += 1
@@ -117,7 +124,8 @@ def update_dictionaries(row, total_points_diff, sets_played, matches_played, win
         h2h_records[(p1, p2)]['outcomes'].append(0)
         h2h_records[(p2, p1)]['outcomes'].append(1)
 
-    if abs(p1_rank - p2_rank) <= 100:
+
+    if abs(p1_rank - p2_rank) <= 200:
         surface_stats[p1][surface]['games'] += 1
         surface_stats[p2][surface]['games'] += 1
         if winner == 1:
@@ -129,8 +137,6 @@ def update_dictionaries(row, total_points_diff, sets_played, matches_played, win
 def calculate_transformed_row(row, total_points_diff, sets_played, matches_played, win_record, h2h_records, surface_stats):
 
     p1, p2 = row['P1'], row['P2']
-    p1_rank, p2_rank = row['P1_Rank'], row['P2_Rank']
-    p1_atpts, p2_atpts = row['P1_ATPts'], row['P2_ATPts']
     surface = row['Surface']
 
     p1_avg = total_points_diff[p1] / sets_played[p1] if sets_played[p1] != 0 else np.nan
@@ -152,9 +158,10 @@ def calculate_transformed_row(row, total_points_diff, sets_played, matches_playe
         'P2': p2,
         'P1_Rank': row['P1_Rank'],
         'P2_Rank': row['P2_Rank'],
-        'P1_ATPts': p1_atpts,
-        'P2_ATPts': p2_atpts,
-        'DIFF_ATPts': p1_atpts - p2_atpts,
+        'DIFF_Rank':row['P2_Rank'] - row['P1_Rank'],
+        'P1_ATPts': row['P1_ATPts'],
+        'P2_ATPts': row['P2_ATPts'],
+        'DIFF_ATPts': row['P1_ATPts'] - row['P2_ATPts'],
         'P1_Avg': round(p1_avg, 2),
         'P2_Avg': round(p2_avg, 2),
         'DIFF_Avg': round(p1_avg - p2_avg, 2),
@@ -178,6 +185,7 @@ def calculate_transformed_row(row, total_points_diff, sets_played, matches_playe
 def preprocess_data(df, split_index):
     
     unique_players = pd.concat([df['P1'], df['P2']]).unique()
+
     total_points_diff, sets_played, matches_played, win_record, h2h_records, surface_stats = initialize_dictionaries(unique_players)
 
     initial_df = df.iloc[:split_index]
@@ -191,15 +199,47 @@ def preprocess_data(df, split_index):
         new_df.append(transformed_row)
         update_dictionaries(row, total_points_diff, sets_played, matches_played, win_record, h2h_records, surface_stats)
 
-    return pd.DataFrame(new_df)
+    #region Save Dictionaries to JSON Files
+    # Helper function to convert NumPy types to Python types
+    def convert_to_serializable(obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()  # Convert NumPy arrays to lists
+        else:
+            raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+    # Combine all dictionaries into one
+    all_dicts = {
+        "total_points_diff": total_points_diff,
+        "sets_played": sets_played,
+        "matches_played": matches_played,
+        "win_record": win_record,
+        "h2h_records": h2h_records,
+        "surface_stats": surface_stats,
+    }
+
+    # Save to a single JSON file
+    with open('dicts.json', 'w') as f:
+        json.dump(all_dicts, f, default=convert_to_serializable)
+
+        #endregion
+        
+        return pd.DataFrame(new_df)
 
 
 data_dir = "../Raw_historical_data"
-file_years = range(2020, 2025)
+file_years = range(2019, 2025)
 
 historical_data_df = read_files_to_dataframe(data_dir, file_years)
+
 df = clip_rename_and_flip_dataframe(historical_data_df)
 
+new_df = preprocess_data(df, split_index= int(0.75*len(df)))
 
-new_df = preprocess_data(df, split_index=int(0.5*len(df)))
 new_df.to_csv('Preprocessed_data.csv', index=False)
+
+
+
