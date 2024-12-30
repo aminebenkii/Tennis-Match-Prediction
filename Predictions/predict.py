@@ -3,24 +3,43 @@ import joblib
 import numpy as np
 import pandas as pd
 
-# Load the model and dictionaries
-log_reg_model = joblib.load("log_reg_model.pkl")
+# Load the model
+try:
+    log_reg_model = joblib.load("log_reg_model.pkl")
+except FileNotFoundError:
+    print("Error: The logistic regression model file 'log_reg_model.pkl' was not found.")
+    exit()
 
-with open("dicts.json", "r") as f:
-    all_dicts = json.load(f)
+# Load the dictionaries
+try:
+    with open("dicts.json", "r") as f:
+        all_dicts = json.load(f)
+except FileNotFoundError:
+    print("Error: The dictionaries file 'dicts.json' was not found.")
+    exit()
 
+# Extract individual dictionaries from the loaded JSON
 total_points_diff = all_dicts["total_points_diff"]
 sets_played = all_dicts["sets_played"]
 matches_played = all_dicts["matches_played"]
 win_record = all_dicts["win_record"]
-h2h_records = all_dicts["h2h_records"]
+h2h_records = {eval(k): v for k, v in all_dicts["h2h_records"].items()}  # Convert string keys back to tuples
 surface_stats = all_dicts["surface_stats"]
 
-# Helper function to preprocess a single match
 def preprocess_match(p1, p2, surface):
-    # Check if players exist in dictionaries
+    """
+    Preprocesses the match data for the given players and surface to create feature input for the model.
+
+    Args:
+        p1 (str): Player 1's name.
+        p2 (str): Player 2's name.
+        surface (str): Surface type ('Hard', 'Clay', 'Grass').
+
+    Returns:
+        pd.DataFrame: A DataFrame containing preprocessed features for the model.
+    """
     if p1 not in total_points_diff or p2 not in total_points_diff:
-        print("One or both players not found in the dictionaries.")
+        print("Error: One or both players not found in the dictionaries.")
         return None
 
     # Calculate average points
@@ -40,30 +59,26 @@ def preprocess_match(p1, p2, surface):
     surface_wr_p1 = surface_stats.get(p1, {}).get(surface, {}).get("wins", 0) / surface_stats.get(p1, {}).get(surface, {}).get("games", 1)
     surface_wr_p2 = surface_stats.get(p2, {}).get(surface, {}).get("wins", 0) / surface_stats.get(p2, {}).get(surface, {}).get("games", 1)
 
-    # Create a feature dictionary
+    # Create a feature dictionary matching the training features
     features = {
-        'P1_Rank': 0,  # Placeholder, replace with actual rank if available
-        'P2_Rank': 0,  # Placeholder, replace with actual rank if available
-        'DIFF_Rank': 0,  # Placeholder
-        'P1_ATPts': 0,  # Placeholder
-        'P2_ATPts': 0,  # Placeholder
-        'DIFF_ATPts': 0,  # Placeholder
-        'P1_Avg': p1_avg,
-        'P2_Avg': p2_avg,
+        'DIFF_Rank': 0,  # Placeholder if rank differences were not calculated
+        'DIFF_ATPts': 0,  # Placeholder if ATP points difference not available
         'DIFF_Avg': p1_avg - p2_avg,
-        'P1_Wr': p1_wr,
-        'P2_Wr': p2_wr,
         'DIFF_Wr': p1_wr - p2_wr,
         'P1P2_H2H': h2h_p1_p2,
-        'P1_SWr': surface_wr_p1,
-        'P2_SWr': surface_wr_p2,
         'DIFF_SWr': surface_wr_p1 - surface_wr_p2,
     }
 
-    return pd.DataFrame([features])
+    # Return as DataFrame with correct column order
+    return pd.DataFrame([features], columns=[
+        'DIFF_Rank', 'DIFF_ATPts', 'DIFF_Avg', 'DIFF_Wr', 'P1P2_H2H', 'DIFF_SWr'
+    ])
 
-# Main function to ask for input and calculate odds
+
 def main():
+    """
+    Main function to accept user input, preprocess match data, and predict odds using the trained model.
+    """
     print("Enter details for the match you want to predict.")
     p1 = input("Enter Player 1's name: ")
     p2 = input("Enter Player 2's name: ")
@@ -75,7 +90,11 @@ def main():
         return
 
     # Predict probabilities
-    y_pred_prob = log_reg_model.predict_proba(features)
+    try:
+        y_pred_prob = log_reg_model.predict_proba(features)
+    except Exception as e:
+        print(f"Error during prediction: {e}")
+        return
 
     # Calculate odds
     p1_odds = 1 / y_pred_prob[0, 0]  # Odds for Player 1
@@ -86,6 +105,5 @@ def main():
     print(f"{p1} Odds: {p1_odds:.2f}")
     print(f"{p2} Odds: {p2_odds:.2f}")
 
-# Run the program
 if __name__ == "__main__":
     main()

@@ -200,7 +200,7 @@ def preprocess_data(df, split_index):
         update_dictionaries(row, total_points_diff, sets_played, matches_played, win_record, h2h_records, surface_stats)
 
     #region Save Dictionaries to JSON Files
-    # Helper function to convert NumPy types to Python types
+    # Helper function to convert problematic types to JSON-compatible types
     def convert_to_serializable(obj):
         if isinstance(obj, np.integer):
             return int(obj)
@@ -208,8 +208,13 @@ def preprocess_data(df, split_index):
             return float(obj)
         elif isinstance(obj, np.ndarray):
             return obj.tolist()  # Convert NumPy arrays to lists
+        elif isinstance(obj, tuple):
+            return str(obj)  # Convert tuples to strings
         else:
             raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+    # Convert `h2h_records` keys to strings
+    h2h_records_serializable = {str(k): v for k, v in h2h_records.items()}
 
     # Combine all dictionaries into one
     all_dicts = {
@@ -217,13 +222,13 @@ def preprocess_data(df, split_index):
         "sets_played": sets_played,
         "matches_played": matches_played,
         "win_record": win_record,
-        "h2h_records": h2h_records,
+        "h2h_records": h2h_records_serializable,
         "surface_stats": surface_stats,
     }
 
-    # Save to a single JSON file
-    with open('dicts.json', 'w') as f:
-        json.dump(all_dicts, f, default=convert_to_serializable)
+    # Save to a JSON file
+    with open("dicts.json", "w") as f:
+        json.dump(all_dicts, f, default=convert_to_serializable, indent=4)
 
         #endregion
         
